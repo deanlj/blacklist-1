@@ -85,7 +85,9 @@ func blacklistLookup(target string, blacklist dnsbl) error {
 	for _, ans := range resp.Answer {
 		Arecord := ans.(*dns.A)
 		if Arecord.A.String() == blacklist.Hit {
-			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v \n %s is blacklisted on %s %v", target, blacklist.Name, Arecord.A, lookupTime, target, blacklist.Name, exMark)
+			log.Printf(`Lookup for: %s on: %s yeilded: %s and took: %v
+				%s is blacklisted on %s %v
+				Request removal at (%s)`, target, blacklist.Name, Arecord.A, lookupTime, target, blacklist.Name, exMark, blacklist.RemovalAddress)
 		} else {
 			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v %v \n", target, blacklist.Name, Arecord.A, lookupTime, questionMark)
 		}
