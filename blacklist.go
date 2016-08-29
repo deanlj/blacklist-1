@@ -11,6 +11,7 @@ import (
 
 const checkMark = "\u2713"
 const exMark = "\u2717"
+const questionMark = "\u003F"
 
 // CheckDomains checks if any domains are blacklisted
 func CheckDomains(domains ...string) error {
@@ -84,9 +85,9 @@ func blacklistLookup(target string, blacklist dnsbl) error {
 	for _, ans := range resp.Answer {
 		Arecord := ans.(*dns.A)
 		if Arecord.A.String() == blacklist.Hit {
-			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v %v \n", target, blacklist.Name, Arecord.A, lookupTime, exMark)
+			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v \n %s is blacklisted on %s %v", target, blacklist.Name, Arecord.A, lookupTime, target, blacklist.Name, exMark)
 		} else {
-			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v %v \n", target, blacklist.Name, Arecord.A, lookupTime, exMark)
+			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v %v \n", target, blacklist.Name, Arecord.A, lookupTime, questionMark)
 		}
 	}
 
