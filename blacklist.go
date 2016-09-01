@@ -1,7 +1,9 @@
 package blacklist
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -13,23 +15,80 @@ const checkMark = "\u2713"
 const exMark = "\u2717"
 const questionMark = "\u003F"
 
+var client dns.Client
+
+// Check checks if any domains or IP addresses are blacklisted
+func Check(addresses ...string) error {
+
+	var wg sync.WaitGroup
+	var queries []*dnsblQuery
+
+	for _, address := range addresses {
+
+		query := dnsblQuery{
+			Value:  address,
+			Target: address,
+		}
+
+		queries = append(queries, &query)
+
+		if net.ParseIP(address) != nil {
+			ipExplode := strings.Split(address, ".")
+			if len(ipExplode) != 4 {
+				log.Printf("IP must be IPv4: %s %v \n", address, exMark)
+				continue
+			}
+			query.Target = ipExplode[3] + "." + ipExplode[2] + "." + ipExplode[1] + "." + ipExplode[0]
+		}
+
+		wg.Add(1)
+		go func(q *dnsblQuery) {
+			for _, blacklist := range Blacklists {
+				wg.Add(1)
+				go func(bl dnsbl) {
+					result, err := blacklistLookup(*q, bl)
+					if err != nil {
+						log.Printf("%s: Lookup failed on: %s with: %v %v \n", q.Value, bl.Name, err, exMark)
+					} else {
+						log.Println(q.Value + ": " + result)
+					}
+					wg.Done()
+				}(blacklist)
+			}
+			wg.Done()
+		}(&query)
+	}
+	wg.Wait()
+
+	return nil
+}
+
 // CheckDomains checks if any domains are blacklisted
+// This is probably depracated now
 func CheckDomains(domains ...string) error {
 
 	var wg sync.WaitGroup
 
 	for _, domain := range domains {
+
+		query := dnsblQuery{
+			Value:  domain,
+			Target: domain,
+		}
+
 		wg.Add(1)
-		go func(d string) {
+		go func(q *dnsblQuery) {
 			for _, blacklist := range Blacklists {
 
-				err := blacklistLookup(d, blacklist)
+				result, err := blacklistLookup(*q, blacklist)
 				if err != nil {
-					log.Printf("Lookup failed on: %s with: %v %v \n", blacklist.Name, err, exMark)
+					q.Results = append(q.Results, fmt.Sprintf("Lookup failed on: %s with: %v %v \n", blacklist.Name, err, exMark))
+				} else {
+					q.Results = append(q.Results, result)
 				}
 			}
 			wg.Done()
-		}(domain)
+		}(&query)
 	}
 	wg.Wait()
 
@@ -37,61 +96,72 @@ func CheckDomains(domains ...string) error {
 }
 
 // CheckIPs checks if any ips are blacklisted
+// This is probably depracated now
 func CheckIPs(ips ...string) error {
 
 	var wg sync.WaitGroup
 
 	for _, ip := range ips {
+
+		query := dnsblQuery{
+			Value: ip,
+		}
+
 		ipExplode := strings.Split(ip, ".")
 		if len(ipExplode) != 4 {
-			log.Printf("IP not properly formatted: %s %v \n", ip, exMark)
+			log.Printf("IP must be IPv4: %s %v \n", ip, exMark)
 			continue
 		}
-		ipReverse := ipExplode[3] + "." + ipExplode[2] + "." + ipExplode[1] + "." + ipExplode[0]
+		query.Target = ipExplode[3] + "." + ipExplode[2] + "." + ipExplode[1] + "." + ipExplode[0]
 
 		wg.Add(1)
-		go func(ip string) {
+		go func(q *dnsblQuery) {
 			for _, blacklist := range Blacklists {
-				err := blacklistLookup(ip, blacklist)
+				result, err := blacklistLookup(*q, blacklist)
 				if err != nil {
-					log.Printf("Lookup failed on: %s with: %v %v \n", blacklist.Name, err, exMark)
+					q.Results = append(q.Results, fmt.Sprintf("Lookup failed on: %s with: %v %v \n", blacklist.Name, err, exMark))
+				} else {
+					q.Results = append(q.Results, result)
 				}
 			}
 			wg.Done()
-		}(ipReverse)
+		}(&query)
 	}
 	wg.Wait()
 
 	return nil
 }
 
-func blacklistLookup(target string, blacklist dnsbl) error {
+func blacklistLookup(query dnsblQuery, blacklist dnsbl) (string, error) {
 
 	client := new(dns.Client)
 	client.Timeout = 4 * time.Second
 
 	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(target+"."+blacklist.Address), dns.TypeA)
+	msg.SetQuestion(dns.Fqdn(query.Target+"."+blacklist.Address), dns.TypeA)
 
 	resp, lookupTime, err := client.Exchange(msg, blacklist.Address+":53")
 	if err != nil {
-		return err
+		return "", err
 	}
 
+	// No Answer means the domain is not blacklisted
 	if len(resp.Answer) == 0 {
-		log.Printf("Lookup for: %s on: %s yeilded no results and took: %v %v \n", target, blacklist.Name, lookupTime, checkMark)
-		return nil
+		return fmt.Sprintf("Lookup on: %s yeilded no results and took: %v %v", blacklist.Name, lookupTime, checkMark), nil
 	}
+
+	// TODO: This loops over multiple answers, function will return on the first though
+	// Probably just need to check if there was an answer and not the specific value (yet)
 	for _, ans := range resp.Answer {
 		Arecord := ans.(*dns.A)
 		if Arecord.A.String() == blacklist.Hit {
-			log.Printf(`Lookup for: %s on: %s yeilded: %s and took: %v
+			return fmt.Sprintf(`Lookup on: %s yeilded: %s and took: %v
 				%s is blacklisted on %s %v
-				Request removal at (%s)`, target, blacklist.Name, Arecord.A, lookupTime, target, blacklist.Name, exMark, blacklist.RemovalAddress)
-		} else {
-			log.Printf("Lookup for: %s on: %s yeilded: %s and took: %v %v \n", target, blacklist.Name, Arecord.A, lookupTime, questionMark)
+				Request removal at (%s)`, blacklist.Name, Arecord.A, lookupTime, query.Value, blacklist.Name, exMark, blacklist.RemovalAddress), nil
 		}
+
+		return fmt.Sprintf("Lookup on: %s yeilded: %s and took: %v %v", blacklist.Name, Arecord.A, lookupTime, questionMark), nil
 	}
 
-	return nil
+	return "", nil
 }
