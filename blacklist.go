@@ -15,8 +15,6 @@ const checkMark = "\u2713"
 const exMark = "\u2717"
 const questionMark = "\u003F"
 
-var client dns.Client
-
 // Check checks if any domains or IP addresses are blacklisted
 func Check(addresses ...string) error {
 
